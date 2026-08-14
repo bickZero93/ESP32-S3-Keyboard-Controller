@@ -18,8 +18,8 @@
 #include <Update.h>
 
 // -- Version ---------------------------------------------------
-#define FW_VERSION "1.0.0"
-#define FW_DATE    "2026-08-13"
+#define FW_VERSION "1.0.7"
+#define FW_DATE    "2026-08-14"
 
 USBHIDKeyboard Keyboard;
 WebServer server(80);
