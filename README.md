@@ -4,6 +4,7 @@
 > Steuere deinen PC drahtlos über ein modernes Webinterface – von jedem Gerät im Netzwerk.
 
 ---
+<img width="500" height="700" alt="image" src="https://github.com/user-attachments/assets/f3075592-b8b3-40d3-89a4-1428b830e045" />
 
 ## ✨ Features im Überblick
 
