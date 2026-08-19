@@ -1,0 +1,43 @@
+name: Apply v1.13.10 release payload
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.release-payload/**'
+      - '.github/workflows/apply-v1.13.10.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p docs/images
+          cat .release-payload/firmware.*.b64 | base64 -d | xz -d > keyboard_controller.ino
+          cat .release-payload/desktop.*.b64 | base64 -d > docs/images/webinterface-desktop.webp
+          cat .release-payload/mobile.*.b64 | base64 -d > docs/images/webinterface-mobile.webp
+          grep -q '#define FW_VERSION "1.13.10"' keyboard_controller.ino
+          test -s docs/images/webinterface-desktop.webp
+          test -s docs/images/webinterface-mobile.webp
+
+      - name: Commit reconstructed release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add keyboard_controller.ino docs/images/webinterface-desktop.webp docs/images/webinterface-mobile.webp
+          git rm -r .release-payload
+          git rm .github/workflows/apply-v1.13.10.yml
+          git commit -m "Release v1.13.10 firmware and webinterface assets"
+          git push origin HEAD:main
