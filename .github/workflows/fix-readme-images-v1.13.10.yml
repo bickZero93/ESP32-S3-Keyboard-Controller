@@ -1,0 +1,139 @@
+name: Fix README images v1.13.10
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-readme-images-v1.13.10.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix-images:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract embedded webinterface
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import gzip, re, pathlib, sys
+
+          ino = pathlib.Path('keyboard_controller.ino').read_text(encoding='utf-8', errors='ignore')
+          # Find sufficiently large C/C++ initializer blocks and try every gzip-looking byte stream.
+          blocks = re.findall(r'\{([^{}]{1000,}?)\}\s*;', ino, flags=re.S)
+          found = None
+          for block in blocks:
+              toks = re.findall(r'0x[0-9A-Fa-f]{1,2}|\b\d{1,3}\b', block)
+              if not toks:
+                  continue
+              try:
+                  data = bytes(int(t, 16) if t.lower().startswith('0x') else int(t) for t in toks)
+              except (ValueError, OverflowError):
+                  continue
+              starts = [m.start() for m in re.finditer(b'\x1f\x8b', data)]
+              for start in starts:
+                  try:
+                      raw = gzip.decompress(data[start:])
+                  except Exception:
+                      continue
+                  low = raw[:4096].lower()
+                  if b'<html' in low or b'<!doctype html' in low:
+                      found = raw
+                      break
+              if found is not None:
+                  break
+
+          if found is None:
+              sys.exit('Embedded gzip HTML not found in keyboard_controller.ino')
+
+          pathlib.Path('/tmp/index.html').write_bytes(found)
+          print(f'Extracted {len(found)} bytes of HTML')
+          PY
+
+      - name: Install Chromium renderer
+        shell: bash
+        run: |
+          npm --silent --no-progress init -y >/dev/null 2>&1
+          npm --silent --no-progress install playwright@1.55.0 >/dev/null
+          npx playwright install --with-deps chromium >/dev/null
+
+      - name: Render desktop and mobile screenshots
+        shell: bash
+        run: |
+          mkdir -p docs/images
+          cat > /tmp/render.mjs <<'JS'
+          import { chromium } from 'playwright';
+          import { pathToFileURL } from 'url';
+
+          const browser = await chromium.launch({headless: true});
+          const url = pathToFileURL('/tmp/index.html').href;
+
+          async function shot(width, height, out, mobile = false) {
+            const context = await browser.newContext({
+              viewport: { width, height },
+              screen: { width, height },
+              deviceScaleFactor: 1,
+              isMobile: mobile,
+              hasTouch: mobile,
+            });
+            const page = await context.newPage();
+            await page.goto(url, { waitUntil: 'load' });
+            await page.waitForTimeout(1800);
+            await page.screenshot({ path: out, fullPage: true, animations: 'disabled' });
+            await context.close();
+          }
+
+          await shot(1440, 1000, 'docs/images/webinterface-desktop.png', false);
+          await shot(390, 844, 'docs/images/webinterface-mobile.png', true);
+          await browser.close();
+          JS
+          node /tmp/render.mjs
+          file docs/images/webinterface-desktop.png docs/images/webinterface-mobile.png
+          test -s docs/images/webinterface-desktop.png
+          test -s docs/images/webinterface-mobile.png
+
+      - name: Repair README image references
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib, re
+
+          p = pathlib.Path('README.md')
+          s = p.read_text(encoding='utf-8')
+          block = '''## Webinterface
+
+### Desktop
+
+![ESP32-S3 HID Controller – Webinterface Desktop](./docs/images/webinterface-desktop.png)
+
+### Mobile
+
+![ESP32-S3 HID Controller – Webinterface Mobile](./docs/images/webinterface-mobile.png)
+
+Das Webinterface ist direkt in der Firmware gzip-komprimiert eingebettet. Die Abbildungen wurden aus der aktuell veröffentlichten Firmware gerendert.
+
+## Highlights'''
+
+          new, n = re.subn(r'## Webinterface\s+.*?\n## Highlights', block, s, count=1, flags=re.S)
+          if n != 1:
+              raise SystemExit('README section "Webinterface" could not be replaced safely')
+          p.write_text(new, encoding='utf-8')
+          PY
+
+      - name: Commit fixed images and README
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add README.md docs/images/webinterface-desktop.png docs/images/webinterface-mobile.png
+          git rm --ignore-unmatch docs/images/webinterface-desktop.webp docs/images/webinterface-mobile.webp
+          git rm .github/workflows/fix-readme-images-v1.13.10.yml
+          git commit -m 'docs: fix README webinterface screenshots'
+          git push origin HEAD:main
